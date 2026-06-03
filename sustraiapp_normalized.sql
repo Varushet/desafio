@@ -1,15 +1,5 @@
 -- =============================================================
--- SUSTRAIAPP — Esquema normalizado (v2)
--- =============================================================
--- Cambios respecto a v1:
---   1. Tabla shared.municipalities  → elimina geografía desnormalizada
---   2. Tabla shared.translations    → i18n sin sufijos _es/_eu/_en
---   3. reviews con FKs explícitas   → sustituye FK polimórfica rota
---   4. Preferencias via interests   → elimina booleans redundantes
---   5. Coordenadas unificadas FLOAT → corrige VARCHAR en gastronomy
---   6. Eliminadas columnas calculadas en events → calcular en consulta con AT TIME ZONE
---   7. culture: fuentes separadas   → google_place_id / kulturklik_id sin ambigüedad
--- Orden de creación: shared → market_data → user_data (respeta dependencias FK)
+-- SUSTRAIAPP — Esquema v4 (Simplificado + Cualificaciones)
 -- =============================================================
 
 CREATE SCHEMA IF NOT EXISTS shared;
@@ -18,49 +8,28 @@ CREATE SCHEMA IF NOT EXISTS user_data;
 
 
 -- =============================================================
--- ESQUEMA: shared  (datos de referencia compartidos)
+-- ESQUEMA: shared
 -- =============================================================
 
--- Municipios normalizados — única fuente de verdad geográfica
--- Referenciado por users, gastronomy, culture, events y preferences
 CREATE TABLE IF NOT EXISTS shared.municipalities (
     id              SERIAL PRIMARY KEY,
     nombre          VARCHAR(100) NOT NULL,
     provincia       VARCHAR(50)  NOT NULL,
     nora_code       VARCHAR(20)  UNIQUE,
-    province_code   VARCHAR(5),                    -- 01 Álava / 48 Bizkaia / 20 Gipuzkoa
+    province_code   VARCHAR(5),
     lat             FLOAT,
     lng             FLOAT,
     UNIQUE (nombre, provincia)
 );
-
--- Traducciones genéricas — elimina los sufijos _es/_eu/_en de todas las tablas
--- entidad_tipo: 'event' | 'gastronomy' | 'culture'
-CREATE TABLE IF NOT EXISTS shared.translations (
-    id              SERIAL PRIMARY KEY,
-    entidad_tipo    VARCHAR(50)  NOT NULL,
-    entidad_id      INTEGER      NOT NULL,
-    lang            VARCHAR(5)   NOT NULL,          -- 'es' | 'eu' | 'en'
-    campo           VARCHAR(100) NOT NULL,          -- 'nombre' | 'descripcion' | 'source_name' …
-    valor           TEXT         NOT NULL,
-    UNIQUE (entidad_tipo, entidad_id, lang, campo)
-);
-
-CREATE INDEX IF NOT EXISTS idx_translations_entity
-    ON shared.translations (entidad_tipo, entidad_id, lang);
 
 
 -- =============================================================
 -- ESQUEMA: market_data
 -- =============================================================
 
--- Eventos
--- ELIMINADOS: municipality_es/latitude/longitude/province_nora_code → municipality_id FK
--- ELIMINADOS: nombre_es/descripcion_es/source_name_es/… → shared.translations
--- ELIMINADOS: year/month/weekday/is_weekend/duration_days → calcular en consulta
 CREATE TABLE IF NOT EXISTS market_data.events (
-    id                  SERIAL  PRIMARY KEY,
-    id_kulturklik       VARCHAR(50)  UNIQUE NOT NULL,
+    id                  SERIAL PRIMARY KEY,
+    external_id         VARCHAR(100) UNIQUE, -- Opcional: para ID externo si hace falta
     municipality_id     INTEGER      NOT NULL REFERENCES shared.municipalities(id) ON DELETE RESTRICT,
     type                VARCHAR(50),
     subtipo             VARCHAR(100),
@@ -71,6 +40,7 @@ CREATE TABLE IF NOT EXISTS market_data.events (
     opening_hours       VARCHAR(100),
     price_eur           FLOAT,
     is_free             BOOLEAN DEFAULT FALSE,
+    is_sponsored        BOOLEAN DEFAULT FALSE,
     purchase_url        TEXT,
     url_event           TEXT,
     url_online          TEXT,
@@ -87,12 +57,11 @@ CREATE INDEX IF NOT EXISTS idx_events_start_date   ON market_data.events (start_
 CREATE INDEX IF NOT EXISTS idx_events_municipality ON market_data.events (municipality_id);
 CREATE INDEX IF NOT EXISTS idx_events_active       ON market_data.events (active);
 
--- Gastronomía
--- CORREGIDO: longitud era VARCHAR(50) → ahora FLOAT
--- ELIMINADOS: municipio/provincia inline → municipality_id FK
+-- -------------------------------------------------------------------
+
 CREATE TABLE IF NOT EXISTS market_data.gastronomy (
     id                      SERIAL PRIMARY KEY,
-    google_place_id         VARCHAR(100) UNIQUE NOT NULL,
+    external_id             VARCHAR(100) UNIQUE, -- Opcional
     nombre                  VARCHAR(255) NOT NULL,
     descripcion             TEXT,
     municipality_id         INTEGER NOT NULL REFERENCES shared.municipalities(id) ON DELETE RESTRICT,
@@ -111,8 +80,8 @@ CREATE TABLE IF NOT EXISTS market_data.gastronomy (
     num_resenas             INTEGER,
     nivel_precio            VARCHAR(50),
     national_phone_number   VARCHAR(20),
-    michelin                BOOLEAN DEFAULT FALSE,
-    repsol                  BOOLEAN DEFAULT FALSE,
+    -- Eliminados michelin y repsol -> ahora van en gastronomy_qualifications
+    is_sponsored            BOOLEAN DEFAULT FALSE,
     active                  BOOLEAN DEFAULT TRUE,
     created_at              TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
@@ -120,15 +89,12 @@ CREATE TABLE IF NOT EXISTS market_data.gastronomy (
 CREATE INDEX IF NOT EXISTS idx_gastro_municipality_active
     ON market_data.gastronomy (municipality_id, active);
 
--- Cultura
--- SEPARADAS las dos fuentes (Google Places y Kulturklik) en columnas claramente opcionales
--- ELIMINADOS: municipio/provincia inline → municipality_id FK
+-- -------------------------------------------------------------------
+
 CREATE TABLE IF NOT EXISTS market_data.culture (
     id                  SERIAL PRIMARY KEY,
-    -- Una de las dos debe estar presente (ver CHECK)
-    google_place_id     VARCHAR(100) UNIQUE,
-    kulturklik_id       VARCHAR(50)  UNIQUE,
-    fuente              VARCHAR(50)  NOT NULL DEFAULT 'Open Data'
+    external_id         VARCHAR(100) UNIQUE, -- Opcional
+    fuente              VARCHAR(50)  NOT NULL DEFAULT 'Manual'
                             CHECK (fuente IN ('Google Places', 'Kulturklik', 'Open Data', 'Manual')),
     nombre              VARCHAR(255) NOT NULL,
     tipo_lugar          VARCHAR(100) NOT NULL,
@@ -151,25 +117,76 @@ CREATE TABLE IF NOT EXISTS market_data.culture (
     lng                 FLOAT   NOT NULL,
     valoracion          FLOAT CHECK (valoracion >= 1 AND valoracion <= 5),
     numero_valoraciones INTEGER,
+    is_sponsored        BOOLEAN DEFAULT FALSE,
     active              BOOLEAN DEFAULT TRUE,
-    created_at          TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-
-    -- Al menos un identificador externo debe estar presente
-    CONSTRAINT culture_requires_external_id CHECK (
-        google_place_id IS NOT NULL OR kulturklik_id IS NOT NULL
-    )
+    created_at          TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 
 CREATE INDEX IF NOT EXISTS idx_culture_municipality ON market_data.culture (municipality_id);
 CREATE INDEX IF NOT EXISTS idx_culture_active       ON market_data.culture (active);
 CREATE INDEX IF NOT EXISTS idx_culture_tipo_lugar   ON market_data.culture (tipo_lugar);
 
+-- -------------------------------------------------------------------
+-- Cualificaciones (Simplificado)
+-- -------------------------------------------------------------------
+
+CREATE TABLE IF NOT EXISTS market_data.qualifications (
+    id          SERIAL PRIMARY KEY,
+    codigo      VARCHAR(50)  UNIQUE, -- Opcional, útil para filtros internos
+    nombre      VARCHAR(100) NOT NULL
+);
+
+-- Catálogo inicial
+INSERT INTO market_data.qualifications (codigo, nombre) VALUES
+    ('repsol_sol',          'Sol Repsol'),
+    ('michelin_estrella',   'Estrella Michelin'),
+    ('denominacion_origen', 'Denominación de Origen'),
+    ('q_calidad',           'Q de Calidad Turística'),
+    ('euskolabel',          'Eusko Label'),
+    ('agricultura_eco',     'Agricultura Ecológica'),
+    ('euskal_baserri',      'Euskal Baserri')
+ON CONFLICT (codigo) DO NOTHING;
+
+-- Tabla de relación (Simplificada: sin fechas ni notas)
+CREATE TABLE IF NOT EXISTS market_data.gastronomy_qualifications (
+    id                  SERIAL PRIMARY KEY,
+    gastronomy_id       INTEGER NOT NULL REFERENCES market_data.gastronomy(id)      ON DELETE CASCADE,
+    qualification_id    INTEGER NOT NULL REFERENCES market_data.qualifications(id)  ON DELETE RESTRICT,
+    UNIQUE (gastronomy_id, qualification_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_gastro_qualif_gastronomy
+    ON market_data.gastronomy_qualifications (gastronomy_id);
+CREATE INDEX IF NOT EXISTS idx_gastro_qualif_qualification
+    ON market_data.gastronomy_qualifications (qualification_id);
+
+-- Vista actualizada
+CREATE OR REPLACE VIEW market_data.gastronomy_with_qualifications AS
+SELECT
+    g.id,
+    g.nombre,
+    g.municipality_id,
+    g.valoracion,
+    g.active,
+    COALESCE(
+        JSON_AGG(
+            JSON_BUILD_OBJECT(
+                'id',     q.id,
+                'nombre', q.nombre
+            )
+        ) FILTER (WHERE q.id IS NOT NULL),
+        '[]'
+    ) AS cualificaciones
+FROM market_data.gastronomy g
+LEFT JOIN market_data.gastronomy_qualifications gq ON gq.gastronomy_id = g.id
+LEFT JOIN market_data.qualifications            q  ON q.id = gq.qualification_id
+GROUP BY g.id;
+
 
 -- =============================================================
--- ESQUEMA: user_data  (después de market_data por las FKs de reviews)
+-- ESQUEMA: user_data
 -- =============================================================
 
--- Usuarios
 CREATE TABLE IF NOT EXISTS user_data.users (
     id_user         SERIAL PRIMARY KEY,
     nombre          VARCHAR(100) NOT NULL,
@@ -185,37 +202,37 @@ CREATE TABLE IF NOT EXISTS user_data.users (
     updated_at      TIMESTAMP    DEFAULT CURRENT_TIMESTAMP
 );
 
--- Árbol de intereses
+-- -------------------------------------------------------------------
+
 CREATE TABLE IF NOT EXISTS user_data.interests (
     id_interes  SERIAL  PRIMARY KEY,
     nombre      VARCHAR(100) NOT NULL,
     father_id   INTEGER REFERENCES user_data.interests(id_interes) ON DELETE SET NULL,
-    level       INTEGER NOT NULL DEFAULT 0          -- 0: raíz · 1: hijo · 2: nieto
+    level       INTEGER NOT NULL DEFAULT 0
 );
 
--- Relación usuario ↔ intereses
 CREATE TABLE IF NOT EXISTS user_data.user_interests (
     id_user     INTEGER NOT NULL REFERENCES user_data.users(id_user)        ON DELETE CASCADE,
     id_interes  INTEGER NOT NULL REFERENCES user_data.interests(id_interes) ON DELETE CASCADE,
     PRIMARY KEY (id_user, id_interes)
 );
 
--- Preferencias del usuario
--- ELIMINADOS: le_gusta_gastro/cultura/eventos/compras → usar user_interests
--- ELIMINADOS: municipio/provincia inline → referencia a municipalities
+-- -------------------------------------------------------------------
+
 CREATE TABLE IF NOT EXISTS user_data.preferences (
     id                  SERIAL  PRIMARY KEY,
     user_id             INTEGER NOT NULL UNIQUE REFERENCES user_data.users(id_user) ON DELETE CASCADE,
     rango_precio        VARCHAR(10)  CHECK (rango_precio IN ('bajo', 'medio', 'alto')),
     movilidad_reducida  BOOLEAN DEFAULT FALSE,
-    -- Array de IDs de municipios de interés (FK lógica hacia shared.municipalities)
     municipios_interes  INTEGER[]    DEFAULT '{}',
     updated_at          TIMESTAMP    DEFAULT CURRENT_TIMESTAMP
 );
 
--- Reseñas con FKs explícitas — sustituye la FK polimórfica sin constraint
--- Exactamente una de las tres FKs debe ser NOT NULL (ver CHECK al final)
--- Va al final porque referencia las tres tablas de market_data
+-- -------------------------------------------------------------------
+-- Reviews (Mantenemos estructura separada o única según prefieras, 
+-- aquí dejo la versión única con CHECK constraint como en v2/v3)
+-- -------------------------------------------------------------------
+
 CREATE TABLE IF NOT EXISTS user_data.reviews (
     id          SERIAL  PRIMARY KEY,
     user_id     INTEGER NOT NULL REFERENCES user_data.users(id_user)   ON DELETE CASCADE,
@@ -236,10 +253,26 @@ CREATE INDEX IF NOT EXISTS idx_reviews_event   ON user_data.reviews (event_id)  
 CREATE INDEX IF NOT EXISTS idx_reviews_gastro  ON user_data.reviews (gastro_id)  WHERE gastro_id  IS NOT NULL;
 CREATE INDEX IF NOT EXISTS idx_reviews_culture ON user_data.reviews (culture_id) WHERE culture_id IS NOT NULL;
 
+-- -------------------------------------------------------------------
+-- Favoritos
+-- -------------------------------------------------------------------
+
+CREATE TABLE IF NOT EXISTS user_data.favorites (
+    id              SERIAL PRIMARY KEY,
+    user_id         INTEGER     NOT NULL REFERENCES user_data.users(id_user) ON DELETE CASCADE,
+    entidad_id      INTEGER     NOT NULL,
+    entidad_tipo    VARCHAR(20) NOT NULL CHECK (entidad_tipo IN ('evento', 'gastronomia', 'cultura')),
+    created_at      TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE (user_id, entidad_id, entidad_tipo)
+);
+
+CREATE INDEX IF NOT EXISTS idx_favorites_user ON user_data.favorites (user_id);
+
 
 -- =============================================================
--- DATOS DE REFERENCIA — Municipios del País Vasco
+-- SEED DATA (Municipios e Intereses básicos)
 -- =============================================================
+
 INSERT INTO shared.municipalities (nombre, provincia, nora_code, province_code, lat, lng) VALUES
     ('Bilbao',          'Bizkaia',   NULL, '48',  43.2630, -2.9350),
     ('Getxo',           'Bizkaia',   NULL, '48',  43.3563, -3.0097),
@@ -250,3 +283,31 @@ INSERT INTO shared.municipalities (nombre, provincia, nora_code, province_code, 
     ('Ermua',           'Bizkaia',   NULL, '48',  43.1897, -2.5011),
     ('Durango',         'Bizkaia',   NULL, '48',  43.1706, -2.6325)
 ON CONFLICT (nombre, provincia) DO NOTHING;
+
+-- Raíces Intereses
+INSERT INTO user_data.interests (nombre, father_id, level) VALUES
+    ('Eventos',            NULL, 0),
+    ('Gastronomía',        NULL, 0),
+    ('Puntos de Interés',  NULL, 0)
+ON CONFLICT DO NOTHING;
+
+-- Eventos Level 1
+INSERT INTO user_data.interests (nombre, father_id, level)
+SELECT nombre, (SELECT id_interes FROM user_data.interests WHERE nombre = 'Eventos' AND level = 0), 1
+FROM (VALUES
+    ('Concierto'), ('Festival'), ('Fiestas'), ('Feria'), ('Teatro'),
+    ('Danza'), ('Conferencia'), ('Cine'), ('Exposición')
+) AS t(nombre) ON CONFLICT DO NOTHING;
+
+-- Gastronomía Level 1
+INSERT INTO user_data.interests (nombre, father_id, level)
+SELECT nombre, (SELECT id_interes FROM user_data.interests WHERE nombre = 'Gastronomía' AND level = 0), 1
+FROM (VALUES
+    ('Restaurantes'), ('Bodegas'), ('Gourmet')
+) AS t(nombre) ON CONFLICT DO NOTHING;
+
+-- Puntos de Interés Level 1
+INSERT INTO user_data.interests (nombre, father_id, level)
+SELECT nombre, (SELECT id_interes FROM user_data.interests WHERE nombre = 'Puntos de Interés' AND level = 0), 1
+FROM (VALUES ('Museos'), ('Patrimonio Cultural')) AS t(nombre)
+ON CONFLICT DO NOTHING;
