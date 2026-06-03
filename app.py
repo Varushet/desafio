@@ -19,6 +19,12 @@ def create_app():
 
     @app.route('/', methods=['GET'])
     def home():
+        """
+        Verifica que la API está activa y accesible.
+        USO: GET / → Retorna un mensaje de bienvenida
+        PARÁMETROS: Ninguno
+        RESPUESTA: {"message": "Bienvenidos a la API SustraiApp"}
+        """
         return jsonify({'message': 'Bienvenidos a la API SustraiApp'}), 200
 
     # ═══════════════════════════════════════════════════════════════════════════════
@@ -28,9 +34,12 @@ def create_app():
     @app.route('/registro', methods=['POST'])
     def registrar_usuario():
         """
-        POST /registro
-        Campos requeridos: nombre, email, password, municipality_id, sexo, age
-        Campos opcionales: apellido, tlf
+        Registra un nuevo usuario en la aplicación.
+        USO: POST /registro con datos del usuario en JSON
+        CAMPOS REQUERIDOS: nombre, email, password, municipality_id, sexo, age
+        CAMPOS OPCIONALES: apellido, tlf
+        RESPUESTA (201): {"mensaje": "Usuario creado correctamente", "usuario": {...}}
+        ERRORES: 400 (campos faltantes), 409 (email duplicado), 500 (error servidor)
         """
         data = request.get_json()
 
@@ -76,7 +85,12 @@ def create_app():
 
     @app.route('/login', methods=['POST'])
     def login():
-        """POST /login — email + password → user_id + role"""
+        """
+        Autentica un usuario con email y contraseña.
+        USO: POST /login con {"email": "...", "password": "..."}
+        RESPUESTA (200): {"mensaje": "Login exitoso", "user_id": 1, "role": "user"}
+        ERRORES: 400 (datos faltantes), 401 (credenciales inválidas)
+        """
         data = request.get_json()
         if not data or not data.get('email') or not data.get('password'):
             return jsonify({"error": "Email y password requeridos"}), 400
@@ -97,7 +111,13 @@ def create_app():
 
     @app.route('/municipios', methods=['GET'])
     def listar_municipios():
-        """GET /municipios — devuelve la lista de municipios disponibles"""
+        """
+        Obtiene la lista de todos los municipios disponibles.
+        USO: GET /municipios
+        PARÁMETROS: Ninguno
+        RESPUESTA (200): [{"id": 1, "nombre": "Bogotá"}, ...]
+        NOTA: Útil para llenar dropdowns en el frontend al registrar usuarios
+        """
         municipios = Municipio.query.order_by(Municipio.nombre).all()
         return jsonify([m.to_dict() for m in municipios]), 200
 
@@ -107,7 +127,13 @@ def create_app():
 
     @app.route('/usuarios/<int:user_id>/preferencias', methods=['GET'])
     def obtener_preferencias(user_id):
-        """GET /usuarios/{user_id}/preferencias"""
+        """
+        Obtiene las preferencias de un usuario específico.
+        USO: GET /usuarios/{user_id}/preferencias
+        PARÁMETROS: user_id (ruta) - ID del usuario
+        RESPUESTA (200): {"user_id": 1, "rango_precio": "medio", ...}
+        ERRORES: 404 (preferencias no encontradas)
+        """
         prefs = Preferencia.query.filter_by(user_id=user_id).first()
         if not prefs:
             return jsonify({"error": "Preferencias no encontradas"}), 404
@@ -116,11 +142,14 @@ def create_app():
     @app.route('/usuarios/<int:user_id>/preferencias', methods=['PUT'])
     def actualizar_preferencias(user_id):
         """
-        PUT /usuarios/{user_id}/preferencias
-        Campos opcionales: rango_precio, movilidad_reducida,
-                           municipios_interes (lista de IDs de municipios)
-        NOTA: los gustos por categoría (gastro, cultura…) ahora se gestionan
-              a través de /usuarios/{user_id}/intereses
+        Actualiza las preferencias de un usuario.
+        USO: PUT /usuarios/{user_id}/preferencias con campos en JSON
+        PARÁMETROS: user_id (ruta) - ID del usuario
+        CAMPOS OPCIONALES EN BODY: rango_precio, movilidad_reducida, municipios_interes
+        EJEMPLO BODY: {"rango_precio": "alto", "movilidad_reducida": true, "municipios_interes": [1, 5]}
+        RESPUESTA (200): {"mensaje": "Preferencias actualizadas", "data": {...}}
+        ERRORES: 404 (no encontradas), 500 (error al actualizar)
+        NOTA: Los intereses (gastro, cultura) se gestionan en /usuarios/{user_id}/intereses
         """
         data = request.get_json()
         prefs = Preferencia.query.filter_by(user_id=user_id).first()
@@ -150,19 +179,38 @@ def create_app():
 
     @app.route('/intereses', methods=['GET'])
     def listar_intereses():
-        """GET /intereses — árbol completo de categorías"""
+        """
+        Obtiene todas las categorías de intereses disponibles.
+        USO: GET /intereses
+        PARÁMETROS: Ninguno
+        RESPUESTA (200): [{"id_interes": 1, "nombre": "Gastronomía", ...}, ...]
+        NOTA: Útil para mostrar opciones al usuario para que seleccione sus intereses
+        """
         intereses = Interes.query.all()
         return jsonify([i.to_dict() for i in intereses]), 200
 
     @app.route('/usuarios/<int:user_id>/intereses', methods=['GET'])
     def obtener_intereses_usuario(user_id):
-        """GET /usuarios/{user_id}/intereses — IDs de intereses del usuario"""
+        """
+        Obtiene los intereses de un usuario específico.
+        USO: GET /usuarios/{user_id}/intereses
+        PARÁMETROS: user_id (ruta) - ID del usuario
+        RESPUESTA (200): {"id_user": 1, "intereses": [1, 3, 5]}
+        NOTA: Retorna una lista de IDs de intereses del usuario
+        """
         user_intereses = UserInteres.query.filter_by(id_user=user_id).all()
         return jsonify({"id_user": user_id, "intereses": [ui.id_interes for ui in user_intereses]}), 200
 
     @app.route('/usuarios/<int:user_id>/intereses', methods=['POST'])
     def agregar_interes_usuario(user_id):
-        """POST /usuarios/{user_id}/intereses — body: {id_interes: int}"""
+        """
+        Agrega un nuevo interés a un usuario.
+        USO: POST /usuarios/{user_id}/intereses
+        PARÁMETROS: user_id (ruta) - ID del usuario
+        BODY REQUERIDO: {"id_interes": 3}
+        RESPUESTA (201): {"mensaje": "Interés agregado"}
+        ERRORES: 400 (id_interes no proporcionado), 404 (interés no existe), 500 (error)
+        """
         data = request.get_json()
         id_interes = data.get('id_interes')
 
@@ -185,7 +233,13 @@ def create_app():
 
     @app.route('/usuarios/<int:user_id>/intereses/<int:id_interes>', methods=['DELETE'])
     def eliminar_interes_usuario(user_id, id_interes):
-        """DELETE /usuarios/{user_id}/intereses/{id_interes}"""
+        """
+        Elimina un interés de un usuario.
+        USO: DELETE /usuarios/{user_id}/intereses/{id_interes}
+        PARÁMETROS: user_id (ruta) - ID del usuario, id_interes (ruta) - ID del interés a eliminar
+        RESPUESTA (200): {"mensaje": "Interés eliminado"}
+        ERRORES: 404 (relación no encontrada), 500 (error al eliminar)
+        """
         relacion = UserInteres.query.filter_by(id_user=user_id, id_interes=id_interes).first()
         if not relacion:
             return jsonify({"error": "Relación no encontrada"}), 404
@@ -205,10 +259,15 @@ def create_app():
     @app.route('/resenas', methods=['POST'])
     def crear_resena():
         """
-        POST /resenas
-        Campos requeridos: user_id, entidad_tipo ('event'|'gastro'|'cultura'),
-                           entidad_id, puntuacion (1-5)
-        Campo opcional:    texto
+        Crea una nueva reseña para un evento, restaurante o lugar cultural.
+        USO: POST /resenas
+        CAMPOS REQUERIDOS EN BODY: user_id, entidad_tipo, entidad_id, puntuacion
+        CAMPO OPCIONAL: texto (comentario)
+        ENTIDAD_TIPO: 'event' (evento), 'gastro' (restaurante), 'cultura' (lugar cultural)
+        PUNTUACION: 1-5
+        EJEMPLO BODY: {"user_id": 1, "entidad_tipo": "gastro", "entidad_id": 15, "puntuacion": 5, "texto": "Excelente"}
+        RESPUESTA (201): {"mensaje": "Reseña creada", "id": 42}
+        ERRORES: 400 (campos faltantes o tipo inválido), 500 (error al crear)
         """
         data = request.get_json()
 
@@ -243,7 +302,15 @@ def create_app():
 
     @app.route('/resenas/<string:entidad_tipo>/<int:entidad_id>', methods=['GET'])
     def obtener_resenas_entidad(entidad_tipo, entidad_id):
-        """GET /resenas/{entidad_tipo}/{entidad_id}"""
+        """
+        Obtiene todas las reseñas de una entidad específica.
+        USO: GET /resenas/{entidad_tipo}/{entidad_id}
+        PARÁMETROS: entidad_tipo (ruta) - 'event', 'gastro' o 'cultura'
+                    entidad_id (ruta) - ID de la entidad
+        RESPUESTA (200): [{"id": 42, "user_id": 1, "puntuacion": 5, "texto": "...", ...}, ...]
+        ERRORES: 400 (tipo inválido)
+        EJEMPLO: GET /resenas/gastro/15 → obtiene todas las reseñas del restaurante 15
+        """
         if entidad_tipo not in ['event', 'gastro', 'cultura']:
             return jsonify({"error": "Tipo inválido"}), 400
 
@@ -257,7 +324,13 @@ def create_app():
 
     @app.route('/eventos', methods=['GET'])
     def listar_eventos():
-        """GET /eventos — últimos 10 eventos activos"""
+        """
+        Obtiene los últimos 10 eventos activos ordenados por fecha de inicio.
+        USO: GET /eventos
+        PARÁMETROS: Ninguno
+        RESPUESTA (200): [{"id": 1, "nombre": "Festival", "start_date": "...", "active": true}, ...]
+        NOTA: Solo retorna eventos con active=true, ordenados por fecha descendente (más recientes primero)
+        """
         eventos = (Evento.query
                    .filter_by(active=True)
                    .order_by(Evento.start_date.desc())
