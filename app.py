@@ -689,6 +689,11 @@ def create_app():
         """
         Endpoint unificado para el asistente.
         Recibe el mensaje, procesa la IA y devuelve la respuesta.
+
+        {
+            "message": "Dime tres sidrerias en gipuzkoa",
+            "session_id": "prueba-postman-001"
+        }
         """
         data = request.get_json()
         if not data or 'message' not in data:
