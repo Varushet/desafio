@@ -687,13 +687,63 @@ def create_app():
     @app.route('/api/chat', methods=['POST'])
     def chat_assistant():
         """
-        Endpoint unificado para el asistente.
-        Recibe el mensaje, procesa la IA y devuelve la respuesta.
-
-        {
-            "message": "Dime tres sidrerias en gipuzkoa",
-            "session_id": "prueba-postman-001"
-        }
+        PARA QUÉ SIRVE:
+            - Devolver una sugerencia conversacional y una lista estructurada 
+              de lugares o eventos con su "predicción de afinidad".
+        
+        CÓMO SE USA:
+            POST /api/chat con JSON en body y header de autenticación.
+        
+        PARÁMETROS DE ENTRADA (Body JSON):
+            - message (str): La petición del usuario en lenguaje natural.
+            - session_id (str): Identificador único de la conversación actual.
+        
+        HEADERS REQUERIDOS:
+            - X-User-Id (int): ID del usuario logueado (para personalización).
+            - Content-Type: application/json
+        
+        EJEMPLO DE USO:
+            // JavaScript
+            const response = await fetch('http://localhost:5000/api/chat', {
+                method: 'POST',
+                headers: { 
+                    'Content-Type': 'application/json',
+                    'X-User-Id': 1 
+                },
+                body: JSON.stringify({
+                    message: 'Quiero comer algo típico en Bilbao',
+                    session_id: 'conversacion-123'
+                })
+            });
+            const data = await response.json();
+        
+        RESPUESTA ESPERADA (200):
+            {
+                "data": {
+                    "suggestion": "Te propongo estos asadores...",
+                    "items": [
+                        {
+                            "item_id": 15,
+                            "nombre": "Asador Etxebarri",
+                            "tipo": "lugar",
+                            "categoria": "Asador",
+                            "provincia": "Bizkaia",
+                            "estrella_prevista": 4.9
+                        }
+                    ],
+                    "consulta": {
+                        "intencion": "lugares",
+                        "provincia": "Bizkaia",
+                        "intereses": [22],
+                        "fecha_inicio": null,
+                        "fecha_fin": null
+                    },
+                    "aviso": null
+                }
+            }
+        
+        ERRORES: 400 (Falta mensaje), 500 (Error interno del asistente)
+        ═══════════════════════════════════════════════════════════════════════
         """
         data = request.get_json()
         if not data or 'message' not in data:
@@ -714,6 +764,7 @@ def create_app():
             return ok(respuesta.dict())
         
         except Exception as e:
+            logging.error(f"Error en chat: {e}")
             return err(f"Error en el asistente: {str(e)}"), 500
         
     return app
