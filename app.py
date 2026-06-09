@@ -2,6 +2,7 @@ from flask import Flask, jsonify, request
 from config import Config
 from models import (db, Municipio, Usuario, Preferencia, Interes,
                     UserInteres, Resena, Evento, Gastronomia, Cultura)
+from assistant_logic import manejar_chat_flask
 from flask_cors import CORS
 from sqlalchemy import text
 from datetime import datetime
@@ -679,8 +680,38 @@ def create_app():
         resenas = Resena.query.filter(fk_col[entidad_tipo] == entidad_id).all()
         return ok([r.to_dict() for r in resenas])
 
-    return app
+    # =========================================================================
+    # chatbot
+    # =========================================================================
 
+    @app.route('/api/chat', methods=['POST'])
+    def chat_assistant():
+        """
+        Endpoint unificado para el asistente.
+        Recibe el mensaje, procesa la IA y devuelve la respuesta.
+        """
+        data = request.get_json()
+        if not data or 'message' not in data:
+            return err("Falta el mensaje"), 400
+
+        # Obtenemos el usuario del header de seguridad
+        user_id = request.headers.get('X-User-Id', type=int)
+        
+        try:
+            # Llamamos a la lógica interna (sin llamadas HTTP externas)
+            respuesta = manejar_chat_flask(
+                message=data['message'],
+                session_id=data.get('session_id', 'demo'),
+                user_id=user_id
+            )
+            
+            # Devolvemos el diccionario compatible con jsonify
+            return ok(respuesta.dict())
+        
+        except Exception as e:
+            return err(f"Error en el asistente: {str(e)}"), 500
+        
+    return app
 
 if __name__ == '__main__':
     app = create_app()
