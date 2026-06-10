@@ -11,10 +11,14 @@ import logging
 import os
 import pickle
 import unicodedata
+from dotenv import load_dotenv
 
 import numpy as np
 import pandas as pd
 import psycopg2
+
+# Cargar variables de entorno desde .env
+load_dotenv()
 
 logging.basicConfig(level=logging.INFO)
 
@@ -58,11 +62,11 @@ def get_municipality_id_from_request():
 # Configuración
 # ──────────────────────────────────────────────────────────────────────────────
 PG = dict(
-    host=os.getenv("PGHOST", "localhost"),
-    port=os.getenv("PGPORT", "5432"),
-    dbname=os.getenv("PGDATABASE", "sustraiapp"),
-    user=os.getenv("PGUSER", "postgres"),
-    password=os.getenv("PGPASSWORD", "postgres"),
+    host=os.getenv("PGHOST"),
+    port=os.getenv("PGPORT"),
+    dbname=os.getenv("PGDATABASE"),
+    user=os.getenv("PGUSER"),
+    password=os.getenv("PGPASSWORD"),
 )
 
 BASE_DIR   = os.path.dirname(os.path.abspath(__file__))
